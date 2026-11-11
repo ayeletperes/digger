@@ -1,11 +1,16 @@
 Release Notes
 =============
 
-CHanges in 0.8.2
+Changes in 0.8.3
+================
+- Make notes for truncated sequences more informative.
+- Fix a bug which cases sequences truncated before the 2nd cysteine to be marked as ORF even if whether they contain a stop codon
+
+Changes in 0.8.2
 ================
 - Fix typo in RH IGH motif params (reported by Luke Herbert)
 
-CHanges in 0.8.1
+Changes in 0.8.1
 ================
 - Revised motif tables to fully implement the new Max/Min values for RSS spacers
 

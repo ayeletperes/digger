@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: receptor_digger
-Version: 0.8.1
+Version: 0.8.3
 Summary: Tools for de novo discovery of genomic germline IG and TR receptor sequences
 Home-page: https://github.com/williamdlees/digger
 Author: William Lees
@@ -13,7 +13,7 @@ Requires-Python: >=3.9
 Description-Content-Type: text/markdown
 License-File: license.txt
 Requires-Dist: biopython>=1.81
-Requires-Dist: receptor_utils>=0.0.46
+Requires-Dist: receptor_utils>=0.0.69
 Requires-Dist: matplotlib-venn
 Dynamic: license-file
 
