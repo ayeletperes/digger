@@ -31,6 +31,7 @@ def get_parser():
     parser.add_argument('-ref_comp', help='ungapped reference set(s) to compare to: name and reference file separated by comma eg mouse,mouse.fasta (may be repeated multiple times)', action='append')
     parser.add_argument('-sense', help='sense in which to read the assembly (forward or reverse) (if omitted will select automatically)')
     parser.add_argument('-keepwf', help='keep working files after processing has completed', action='store_true')
+    parser.add_argument('-threads', help='number of contigs to process in parallel (default 1)')
     parser.add_argument('output_file', help='output file (csv)')
     return parser
 
@@ -223,6 +224,9 @@ def main():
 
     if args.v_ref_gapped:
         cmd.extend(['-align', args.v_ref_gapped])
+
+    if args.threads:
+        cmd.extend(['-threads', args.threads])
 
     cmd.append(args.output_file)
 

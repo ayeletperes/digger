@@ -10,6 +10,7 @@ from math import ceil
 import glob
 import os.path
 import argparse
+import multiprocessing
 from receptor_utils import simple_bio_seq as simple
 
 try:
@@ -44,6 +45,7 @@ def get_parser():
     parser.add_argument('-locus', help='locus (default is IGH)')
     parser.add_argument('-sense', help='sense in which to read the assembly (forward or reverse) (will select automatically)')
     parser.add_argument('-debug', help='produce parsing_errors file with debug information', action='store_true')
+    parser.add_argument('-threads', help='number of contigs to process in parallel (default 1)')
     parser.add_argument('output_file', help='output file (csv)')
     return parser
 
@@ -363,6 +365,24 @@ def process_file(this_blast_file, writer, write_parsing_errors):
                     writer.writerow(v_parsing_errors[start])
 
 
+# Fake a csv writer that can be passed to process_file, so that a worker can return its rows
+
+class RowCollector(list):
+    def writerow(self, row):
+        self.append(row)
+
+
+# Process one contig in a worker process. Globals set in main() are inherited through fork
+
+def process_one(job):
+    global assembly, assembly_length
+    blast_file_name, assembly = job
+    assembly_length = len(assembly)
+    rows = RowCollector()
+    process_file(blast_file_name, rows, args.debug)
+    return rows
+
+
 def main():
     global args, assembly, assembly_length, germlines, locus, manual_sense, J_TRP_MOTIF, J_TRP_OFFSET,  J_SPLICE, J_RSS_SPACING, V_RSS_SPACING, D_5_RSS_SPACING, D_3_RSS_SPACING, vreference_sets, conserved_motif_seqs
     global v_gapped_ref
@@ -433,6 +453,7 @@ def main():
             process_file(blast_file, writer, args.debug)
         else:
             assemblies = {}
+            jobs = []
             for name, seq in simple.read_fasta(assembly_file).items():
                 assemblies[name] = seq
 
@@ -448,9 +469,23 @@ def main():
 
                 if assembly is not None:
                     print(f'Processing {blast_file_name} with assembly {assembly_name}')
-                    process_file(blast_file_name, writer, args.debug)
+                    jobs.append((blast_file_name, assembly))
                 else:
                     print('no corresponding assembly found for output file %s' % blast_file_name)
+
+            # use at most one process per contig: more would sit idle.
+            # pool.map returns results in the order of jobs, so the output is in the same order as a serial run.
+            # chunksize 1 hands out one contig at a time, so that no worker is left with a batch of large contigs
+            threads = int(args.threads) if args.threads is not None else 1
+            threads = min(threads, len(jobs))
+
+            if threads > 1:
+                with multiprocessing.get_context('fork').Pool(threads) as pool:
+                    for rows in pool.map(process_one, jobs, chunksize=1):
+                        writer.writerows(rows)
+            else:
+                for job in jobs:
+                    writer.writerows(process_one(job))
 
 if __name__ == "__main__":
     main()
