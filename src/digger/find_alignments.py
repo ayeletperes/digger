@@ -131,6 +131,18 @@ def calc_matched_refs(row):
             print(f'WARNING: nt_diff is zero but score is not 100%: {row}')
 
 
+def add_best_hit(row, raw_hits):
+    # Best BLAST hit of the row's gene type over the called region, scored in bits. Unlike evalue (the seed hit of the
+    # region, often another allele, and scaled by contig length), the bit score does not depend on contig length.
+    lo, hi = min(row['start'], row['end']), max(row['start'], row['end'])
+    best = None
+    for h_lo, h_hi, bits, evalue, subject in raw_hits:
+        if h_lo <= hi and h_hi >= lo and determine_gene_type(subject, locus) == row['gene_type'] and (best is None or bits > best[0]):
+            best = (bits, evalue, subject)
+    if best:
+        row['best_hit_bits'], row['best_hit_evalue'], row['best_hit_subject'] = best
+
+
 def strings_to_num(row, fields):
     for field in fields:
         if '.' in row[field]:
@@ -174,6 +186,7 @@ def process_file(this_blast_file, writer, write_parsing_errors):
         this_contig_name = None
         forward_gene_alignments = defaultdict(list)
         reverse_gene_alignments = defaultdict(list)
+        raw_hits = []       # (lo, hi, bit score, evalue, subject) of every BLAST hit, contig coordinates as aligned
 
         reader = csv.DictReader(fi, dialect='excel')
         for row in reader:
@@ -184,6 +197,7 @@ def process_file(this_blast_file, writer, write_parsing_errors):
                 quit()
 
             row = strings_to_num(row, ['identity', 'alignment length', 'mismatches', 'gap opens', 'q start', 'q end', 's start', 's end', 'evalue', 'bit score'])
+            raw_hits.append((min(row['q start'], row['q end']), max(row['q start'], row['q end']), row['bit score'], row['evalue'], row['subject']))
 
             if row['s end'] < row['s start']:
                 row['sense'] = '-'
@@ -365,6 +379,7 @@ def process_file(this_blast_file, writer, write_parsing_errors):
         for row in results.values():
             calc_matched_refs(row)
             row['contig'] = this_contig_name
+            add_best_hit(row, raw_hits)
 
         for key in sorted(results.keys()):
             writer.writerow(results[key])
@@ -453,6 +468,7 @@ def main():
         ])
 
         fieldnames.extend(['matches', 'blast_match', 'blast_score', 'blast_nt_diffs', 'evalue'])
+        fieldnames.extend(['best_hit_subject', 'best_hit_bits', 'best_hit_evalue'])
 
         writer = csv.DictWriter(fo, fieldnames=fieldnames, restval='')
         writer.writeheader()
