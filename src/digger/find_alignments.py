@@ -79,6 +79,11 @@ aligner_global = PairwiseAligner(
     mismatch_score=0
 )
 
+# best reference match for each (reference set, gene type, sequence). calc_matched_refs is called for the same sequence
+# several times while overlapping hits are resolved, and identical contigs give identical sequences, so align each only once
+
+matched_ref_cache = {}
+
 
 def calc_matched_refs(row):
     for ref in reference_sets:
@@ -86,21 +91,27 @@ def calc_matched_refs(row):
         row[ref['name'] + '_score'] = 0
         row[ref['name'] + '_nt_diffs'] = 999
         best_ref_seq = ''
+        key = (ref['name'], row['gene_type'], row['seq'])
 
-        for ref_name, ref_seq in ref['seqs'].items():
-            ref_gene_type = determine_gene_type(ref_name, locus)
- 
-            if row['gene_type'] in ref_gene_type:
-                if row['seq'] and ref_seq:
-                    alignment = aligner_global.align(row['seq'], ref_seq)[0]
-                    score = alignment.score
-                
-                    if score > row[ref['name'] + '_score']:
-                        row[ref['name'] + '_score'] = score
-                        row[ref['name'] + '_match'] = ref_name
-                        c = alignment.counts()
-                        row[ref['name'] + '_nt_diffs'] = max(len(row['seq']), len(ref_seq)) - c.identities
-                        best_ref_seq = ref_seq
+        if key in matched_ref_cache:
+            row[ref['name'] + '_match'], row[ref['name'] + '_score'], row[ref['name'] + '_nt_diffs'], best_ref_seq = matched_ref_cache[key]
+        else:
+            for ref_name, ref_seq in ref['seqs'].items():
+                ref_gene_type = determine_gene_type(ref_name, locus)
+
+                if row['gene_type'] in ref_gene_type:
+                    if row['seq'] and ref_seq:
+                        alignment = aligner_global.align(row['seq'], ref_seq)[0]
+                        score = alignment.score
+
+                        if score > row[ref['name'] + '_score']:
+                            row[ref['name'] + '_score'] = score
+                            row[ref['name'] + '_match'] = ref_name
+                            c = alignment.counts()
+                            row[ref['name'] + '_nt_diffs'] = max(len(row['seq']), len(ref_seq)) - c.identities
+                            best_ref_seq = ref_seq
+
+            matched_ref_cache[key] = (row[ref['name'] + '_match'], row[ref['name'] + '_score'], row[ref['name'] + '_nt_diffs'], best_ref_seq)
 
         if row[ref['name'] + '_nt_diffs'] == 999:
             row[ref['name'] + '_nt_diffs'] = 0
