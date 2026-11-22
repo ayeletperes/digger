@@ -7,6 +7,10 @@ from Bio.Align import PairwiseAligner
 from receptor_utils import simple_bio_seq as simple
 from receptor_utils.number_v import gap_sequence, number_ighv, gap_nt_from_aa
 
+# gap_sequence compares a V sequence with every ungapped reference, and the same sequence comes back for every BLAST hit
+# and leader/RSS pair that brackets it, so gap each sequence only once per reference set
+gap_sequence_cache = {}
+
 try:
     from motif import Motif
     from search_motifs import find_compound_motif, MotifResult, SingleMotifResult, find_single_motif
@@ -636,7 +640,10 @@ class VAnnotation:
         v_p = simple.translate(self.ungapped)
 
         if self.align_refs:
-            self.gapped, self.gapped_aa, errors = gap_sequence(self.ungapped, self.v_gapped_ref, self.v_ungapped_ref)
+            key = (id(self.v_gapped_ref), id(self.v_ungapped_ref), self.ungapped)
+            if key not in gap_sequence_cache:
+                gap_sequence_cache[key] = gap_sequence(self.ungapped, self.v_gapped_ref, self.v_ungapped_ref)
+            self.gapped, self.gapped_aa, errors = gap_sequence_cache[key]
         else:
             self.gapped_aa, errors = number_ighv(str(v_p))
             if self.gapped_aa is not None and len(self.gapped_aa) > 0:

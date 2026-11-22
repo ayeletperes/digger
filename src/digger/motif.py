@@ -14,6 +14,10 @@ class Motif:
         self.consensus_prob = None
         self.likelihood_threshold = None
         self.logo = None
+        # likelihood and logo check per window sequence: the leader and RSS scans score the same windows again for every
+        # BLAST hit near a gene, so score each window once. Cleared whenever the matrix is recalculated (calc_update)
+        self.likelihood_cache = {}
+        self.logo_cache = {}
 
         if seqs is not None:
             self.calc_prob_matrix(seqs)
@@ -21,6 +25,8 @@ class Motif:
             self.read_prob_matrix(stream)
 
     def calc_update(self):
+        self.likelihood_cache = {}
+        self.logo_cache = {}
         self.calc_consensus()
         self.consensus_prob = self.calc_prob(self.consensus)
         self.calc_conserved_consensus()
@@ -103,7 +109,9 @@ class Motif:
         return prob
 
     def calc_likelihood(self, seq):
-        return self.calc_prob(seq) / self.consensus_prob
+        if seq not in self.likelihood_cache:
+            self.likelihood_cache[seq] = self.calc_prob(seq) / self.consensus_prob
+        return self.likelihood_cache[seq]
 
 
     def find_non_conserved(self, seq):
@@ -119,6 +127,11 @@ class Motif:
         return non_conserved, res
 
     def check_logo(self, seq):
+        if seq not in self.logo_cache:
+            self.logo_cache[seq] = self.check_logo_uncached(seq)
+        return self.logo_cache[seq]
+
+    def check_logo_uncached(self, seq):
         if self.logo is None:
             return True
         
