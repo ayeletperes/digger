@@ -4,12 +4,42 @@ from operator import attrgetter
 from dataclasses import dataclass
 
 from Bio.Align import PairwiseAligner
+import numpy as np
 from receptor_utils import simple_bio_seq as simple
 from receptor_utils.number_v import gap_sequence, number_ighv, gap_nt_from_aa
 
 # gap_sequence compares a V sequence with every ungapped reference, and the same sequence comes back for every BLAST hit
 # and leader/RSS pair that brackets it, so gap each sequence only once per reference set
 gap_sequence_cache = {}
+
+# leader candidates: the same L-PART1 + L-PART2 pair comes back for every BLAST hit near a gene, so translate each once
+leader_in_frame_cache = {}
+
+# ungapped reference set as a byte matrix for closest_ref, per reference dict (one per run)
+ref_matrix_cache = {}
+
+
+# The reference gap_sequence would gap seq with: the first one with the fewest receptor_utils nt_diff differences, i.e.
+# mismatches over the common length, not counting positions where either sequence has X or N, plus the length difference.
+# Same integer counts as nt_diff, all references at once; argmin returns the first minimum, as min() does
+def closest_ref(seq, ungapped_ref):
+    if id(ungapped_ref) not in ref_matrix_cache:
+        names = list(ungapped_ref.keys())
+        lengths = np.array([len(s) for s in ungapped_ref.values()])
+        refs = np.zeros((len(names), lengths.max()), dtype=np.uint8)
+        for i, s in enumerate(ungapped_ref.values()):
+            refs[i, :len(s)] = np.frombuffer(s.upper().encode('ascii'), dtype=np.uint8)
+        ref_matrix_cache[id(ungapped_ref)] = (names, lengths, refs)
+    names, lengths, refs = ref_matrix_cache[id(ungapped_ref)]
+
+    q = np.frombuffer(seq.upper().encode('ascii'), dtype=np.uint8)
+    if len(q) > refs.shape[1]:
+        refs = np.pad(refs, ((0, 0), (0, len(q) - refs.shape[1])))
+    r = refs[:, :len(q)]
+    xn = np.frombuffer(b'XN', dtype=np.uint8)
+    counted = (r != q) & ~np.isin(r, xn) & ~np.isin(q, xn) & (np.arange(len(q)) < lengths[:, None])
+    diffs = counted.sum(axis=1) + np.abs(len(q) - lengths)
+    return names[int(np.argmin(diffs))]
 
 try:
     from motif import Motif
@@ -642,7 +672,9 @@ class VAnnotation:
         if self.align_refs:
             key = (id(self.v_gapped_ref), id(self.v_ungapped_ref), self.ungapped)
             if key not in gap_sequence_cache:
-                gap_sequence_cache[key] = gap_sequence(self.ungapped, self.v_gapped_ref, self.v_ungapped_ref)
+                # gap_sequence picks the closest reference by nt_diff in a Python loop; pick it here instead and pass only that one
+                c = closest_ref(self.ungapped, self.v_ungapped_ref)
+                gap_sequence_cache[key] = gap_sequence(self.ungapped, {c: self.v_gapped_ref[c]}, {c: self.v_ungapped_ref[c]})
             self.gapped, self.gapped_aa, errors = gap_sequence_cache[key]
         else:
             self.gapped_aa, errors = number_ighv(str(v_p))
@@ -832,7 +864,10 @@ def process_v(assembly, assembly_rc, germlines, v_gapped_ref, v_ungapped_ref, co
 
             in_frame = []
             for cand in cands:
-                if 'X' not in simple.translate(cand.left + cand.right):
+                leader_seq = cand.left + cand.right
+                if leader_seq not in leader_in_frame_cache:
+                    leader_in_frame_cache[leader_seq] = 'X' not in simple.translate(leader_seq)
+                if leader_in_frame_cache[leader_seq]:
                     in_frame.append(cand)
 
             #if len(in_frame) > 0:

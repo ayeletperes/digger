@@ -2,6 +2,7 @@
 
 import csv
 import json
+import numpy as np
 from receptor_utils import simple_bio_seq as simple
 
 
@@ -14,9 +15,8 @@ class Motif:
         self.consensus_prob = None
         self.likelihood_threshold = None
         self.logo = None
-        # likelihood and logo check per window sequence: the leader and RSS scans score the same windows again for every
-        # BLAST hit near a gene, so score each window once. Cleared whenever the matrix is recalculated (calc_update)
-        self.likelihood_cache = {}
+        # logo check per window sequence: the leader scan checks the same windows again for every BLAST hit near a gene, so
+        # check each once. Cleared whenever the matrix is recalculated (calc_update)
         self.logo_cache = {}
 
         if seqs is not None:
@@ -25,8 +25,14 @@ class Motif:
             self.read_prob_matrix(stream)
 
     def calc_update(self):
-        self.likelihood_cache = {}
         self.logo_cache = {}
+        # for window_likelihoods: per motif position, the factor calc_prob uses for each byte (1.0 where calc_prob skips the base)
+        self.base_tables = []
+        for m in self.matrix:
+            table = np.ones(256)
+            for b, p in m.items():
+                table[ord(b)] = p
+            self.base_tables.append(table)
         self.calc_consensus()
         self.consensus_prob = self.calc_prob(self.consensus)
         self.calc_conserved_consensus()
@@ -109,10 +115,18 @@ class Motif:
         return prob
 
     def calc_likelihood(self, seq):
-        if seq not in self.likelihood_cache:
-            self.likelihood_cache[seq] = self.calc_prob(seq) / self.consensus_prob
-        return self.likelihood_cache[seq]
+        return self.calc_prob(seq) / self.consensus_prob
 
+
+    # calc_likelihood of every window of the motif's length in seq, as a numpy array. Each window is multiplied base by base in the
+    # same order as calc_prob, in the same float64 arithmetic, so the values are bit-identical to calc_likelihood
+    def window_likelihoods(self, seq):
+        codes = np.frombuffer(seq.encode('ascii'), dtype=np.uint8)
+        n = len(codes) - len(self.base_tables) + 1
+        prob = np.ones(n)
+        for j, table in enumerate(self.base_tables):
+            prob = prob * table[codes[j:j + n]]
+        return prob / self.consensus_prob
 
     def find_non_conserved(self, seq):
         non_conserved = 0
