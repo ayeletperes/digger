@@ -166,7 +166,7 @@ def find_single_motif(assembly, conserved_motif_seqs, motif, min_start, max_star
         It returns a list of `SingleMotifResult` objects representing the discovered motifs and their likelihoods.
 
     .. warning::
-        The function assumes that the `Motif` class has a `calc_likelihood` method to calculate the likelihood of a given sequence.
+        The function assumes that the `Motif` class has a `window_likelihoods` method to calculate the likelihood of every window of a sequence.
     """
     res = []
     consensus_len = len(motif.consensus)
