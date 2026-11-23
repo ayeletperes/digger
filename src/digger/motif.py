@@ -2,6 +2,7 @@
 
 import csv
 import json
+import numpy as np
 from receptor_utils import simple_bio_seq as simple
 
 
@@ -27,6 +28,13 @@ class Motif:
     def calc_update(self):
         self.likelihood_cache = {}
         self.logo_cache = {}
+        # for window_likelihoods: per motif position, the factor calc_prob uses for each byte (1.0 where calc_prob skips the base)
+        self.base_tables = []
+        for m in self.matrix:
+            table = np.ones(256)
+            for b, p in m.items():
+                table[ord(b)] = p
+            self.base_tables.append(table)
         self.calc_consensus()
         self.consensus_prob = self.calc_prob(self.consensus)
         self.calc_conserved_consensus()
@@ -113,6 +121,16 @@ class Motif:
             self.likelihood_cache[seq] = self.calc_prob(seq) / self.consensus_prob
         return self.likelihood_cache[seq]
 
+
+    # calc_likelihood of every window of the motif's length in seq, as a list. Each window is multiplied base by base in the
+    # same order as calc_prob, in the same float64 arithmetic, so the values are bit-identical to calc_likelihood
+    def window_likelihoods(self, seq):
+        codes = np.frombuffer(seq.encode('ascii'), dtype=np.uint8)
+        n = len(codes) - len(self.base_tables) + 1
+        prob = np.ones(n)
+        for j, table in enumerate(self.base_tables):
+            prob = prob * table[codes[j:j + n]]
+        return prob / self.consensus_prob
 
     def find_non_conserved(self, seq):
         non_conserved = 0

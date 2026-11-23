@@ -1,5 +1,6 @@
 # Search for single and double motifs
 from operator import attrgetter
+import numpy as np
 
 
 class SingleMotifResult:
@@ -168,21 +169,17 @@ def find_single_motif(assembly, conserved_motif_seqs, motif, min_start, max_star
         The function assumes that the `Motif` class has a `calc_likelihood` method to calculate the likelihood of a given sequence.
     """
     res = []
-    max_found = 0
-    max_hit = ''
-    # print('looking for single motif %s in %s' % (motif.consensus, assembly[min_start-1:min_start + len(motif.consensus) + (max_start-min_start)]))
     consensus_len = len(motif.consensus)
 
-    for p in range(min_start, max_start+1):
-        if p >= 1 and p + consensus_len - 1 <= len(assembly):
-            seq = assembly[p-1:p-1 + consensus_len]
-            likelihood = motif.calc_likelihood(seq)
+    # the start positions p that fit in the assembly (p >= 1, p + consensus_len - 1 <= len(assembly)), all scored at once
+    first = max(min_start, 1)
+    last = min(max_start, len(assembly) - consensus_len + 1)
+    if first > last:
+        return res
 
-            if likelihood > max_found:
-                max_found = likelihood
-
-            if likelihood >= motif.likelihood_threshold:
-                res.append(SingleMotifResult(assembly, conserved_motif_seqs, motif, p, likelihood))
+    likelihoods = motif.window_likelihoods(assembly[first - 1:last - 1 + consensus_len])
+    for i in np.flatnonzero(likelihoods >= motif.likelihood_threshold).tolist():
+        res.append(SingleMotifResult(assembly, conserved_motif_seqs, motif, first + i, float(likelihoods[i])))
 
     return res
 
