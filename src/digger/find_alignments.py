@@ -103,13 +103,14 @@ def calc_matched_refs(row):
 
                 if row['gene_type'] in ref_gene_type:
                     if row['seq'] and ref_seq:
-                        alignment = aligner_global.align(row['seq'], ref_seq)[0]
-                        score = alignment.score
+                        # score() is the same optimal score as align() without the traceback; the alignment itself is
+                        # only needed for the nt diffs of a new best
+                        score = aligner_global.score(row['seq'], ref_seq)
 
                         if score > row[ref['name'] + '_score']:
                             row[ref['name'] + '_score'] = score
                             row[ref['name'] + '_match'] = ref_name
-                            c = alignment.counts()
+                            c = aligner_global.align(row['seq'], ref_seq)[0].counts()
                             row[ref['name'] + '_nt_diffs'] = max(len(row['seq']), len(ref_seq)) - c.identities
                             best_ref_seq = ref_seq
 

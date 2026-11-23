@@ -11,6 +11,9 @@ from receptor_utils.number_v import gap_sequence, number_ighv, gap_nt_from_aa
 # and leader/RSS pair that brackets it, so gap each sequence only once per reference set
 gap_sequence_cache = {}
 
+# leader candidates: the same L-PART1 + L-PART2 pair comes back for every BLAST hit near a gene, so translate each once
+leader_in_frame_cache = {}
+
 try:
     from motif import Motif
     from search_motifs import find_compound_motif, MotifResult, SingleMotifResult, find_single_motif
@@ -832,7 +835,10 @@ def process_v(assembly, assembly_rc, germlines, v_gapped_ref, v_ungapped_ref, co
 
             in_frame = []
             for cand in cands:
-                if 'X' not in simple.translate(cand.left + cand.right):
+                leader_seq = cand.left + cand.right
+                if leader_seq not in leader_in_frame_cache:
+                    leader_in_frame_cache[leader_seq] = 'X' not in simple.translate(leader_seq)
+                if leader_in_frame_cache[leader_seq]:
                     in_frame.append(cand)
 
             #if len(in_frame) > 0:
