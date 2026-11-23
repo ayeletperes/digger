@@ -11,6 +11,7 @@ import glob
 import os.path
 import argparse
 import multiprocessing
+import numpy as np
 from receptor_utils import simple_bio_seq as simple
 
 try:
@@ -86,6 +87,60 @@ aligner_global = PairwiseAligner(
 
 matched_ref_cache = {}
 
+# Exact pruning of the allele scan. With match 1, mismatch 0 and gap -1 (end gaps included), score(a, b) = (len(a) + len(b) -
+# d(a, b)) / 2, where d = 2 x mismatches + 3 x gap columns is an edit distance and so obeys the triangle inequality:
+# d(seq, ref) >= |d(seq, pivot) - d(pivot, ref)| for any pivot, and d(seq, ref) >= 3 x |len(seq) - len(ref)|. That caps the
+# score each reference can reach. The full scan keeps the first reference with the highest score, so a reference whose cap
+# is below the best score found so far, or equal to it but later in reference order, cannot be the one it keeps, and is not
+# scored. Pivots are chosen once per reference set and gene type (each next pivot the reference farthest from those so far).
+
+N_PIVOTS = 32
+pivot_sets = {}
+
+
+def get_pivot_set(ref, gene_type):
+    # the caps hold only for these scores (see above); any other aligner would make the pruning silently drop the best match
+    if (aligner_global.mode, aligner_global.match_score, aligner_global.mismatch_score, aligner_global.open_gap_score, aligner_global.extend_gap_score) != ('global', 1, 0, -1, -1):
+        raise ValueError('calc_matched_refs pruning needs a global aligner with match 1, mismatch 0 and all gap scores -1')
+    key = (ref['name'], gene_type)
+    if key not in pivot_sets:
+        # the references the full scan would score, in reference order
+        cands = [(name, seq) for name, seq in ref['seqs'].items() if gene_type in determine_gene_type(name, locus) and seq]
+        lengths = np.array([len(seq) for name, seq in cands])
+        pivots, to_pivots = [], []
+        nearest = np.full(len(cands), np.inf)
+        p = 0
+        while len(cands) > 0 and len(pivots) < N_PIVOTS and nearest[p] > 0:
+            pivots.append(p)
+            to_pivots.append([len(cands[p][1]) + len(seq) - 2 * aligner_global.score(cands[p][1], seq) for name, seq in cands])
+            nearest = np.minimum(nearest, to_pivots[-1])
+            p = int(np.argmax(nearest))
+        pivot_sets[key] = (cands, lengths, pivots, np.array(to_pivots))
+    return pivot_sets[key]
+
+
+# The reference the full scan keeps for seq: highest score, first in reference order. Returns (index into cands, score)
+def best_ref_match(seq, ref, gene_type):
+    cands, lengths, pivots, to_pivots = get_pivot_set(ref, gene_type)
+    if len(cands) == 0:
+        return None, 0
+    scores = {i: aligner_global.score(seq, cands[i][1]) for i in pivots}
+    to_seq = np.array([len(seq) + lengths[i] - 2 * scores[i] for i in pivots])
+    lower = np.maximum(np.abs(to_seq[:, None] - to_pivots).max(axis=0), 3 * np.abs(lengths - len(seq)))
+    caps = (len(seq) + lengths - lower) / 2
+    best = max(scores, key=lambda i: (scores[i], -i))
+
+    # highest cap first, so that the scan can stop at the first cap below the best score
+    for i in np.lexsort((np.arange(len(cands)), -caps)).tolist():
+        if caps[i] < scores[best]:
+            break
+        if i in scores or (caps[i] == scores[best] and i > best):
+            continue
+        scores[i] = aligner_global.score(seq, cands[i][1])
+        if (scores[i], -i) > (scores[best], -best):
+            best = i
+    return best, scores[best]
+
 
 def calc_matched_refs(row):
     for ref in reference_sets:
@@ -98,21 +153,17 @@ def calc_matched_refs(row):
         if key in matched_ref_cache:
             row[ref['name'] + '_match'], row[ref['name'] + '_score'], row[ref['name'] + '_nt_diffs'], best_ref_seq = matched_ref_cache[key]
         else:
-            for ref_name, ref_seq in ref['seqs'].items():
-                ref_gene_type = determine_gene_type(ref_name, locus)
-
-                if row['gene_type'] in ref_gene_type:
-                    if row['seq'] and ref_seq:
-                        # score() is the same optimal score as align() without the traceback; the alignment itself is
-                        # only needed for the nt diffs of a new best
-                        score = aligner_global.score(row['seq'], ref_seq)
-
-                        if score > row[ref['name'] + '_score']:
-                            row[ref['name'] + '_score'] = score
-                            row[ref['name'] + '_match'] = ref_name
-                            c = aligner_global.align(row['seq'], ref_seq)[0].counts()
-                            row[ref['name'] + '_nt_diffs'] = max(len(row['seq']), len(ref_seq)) - c.identities
-                            best_ref_seq = ref_seq
+            if row['seq']:
+                # score() is the same optimal score as align() without the traceback; the alignment itself is only needed for
+                # the nt diffs of the reference kept. A best score of 0 or less keeps no reference, as in the full scan
+                best, score = best_ref_match(row['seq'], ref, row['gene_type'])
+                if score > 0:
+                    ref_name, ref_seq = get_pivot_set(ref, row['gene_type'])[0][best]
+                    row[ref['name'] + '_score'] = score
+                    row[ref['name'] + '_match'] = ref_name
+                    c = aligner_global.align(row['seq'], ref_seq)[0].counts()
+                    row[ref['name'] + '_nt_diffs'] = max(len(row['seq']), len(ref_seq)) - c.identities
+                    best_ref_seq = ref_seq
 
             matched_ref_cache[key] = (row[ref['name'] + '_match'], row[ref['name'] + '_score'], row[ref['name'] + '_nt_diffs'], best_ref_seq)
 
@@ -434,6 +485,9 @@ def main():
 
     for ref in reference_sets:
         ref['seqs'] = simple.read_fasta(ref['file'])
+        # pivots before any -threads workers fork, so that they share them
+        for gene_type in sorted(set(determine_gene_type(name, locus) for name in ref['seqs']) - {None}):
+            get_pivot_set(ref, gene_type)
 
     if args.align is not None:
         v_gapped_ref = simple.read_fasta(args.align)
